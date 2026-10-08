@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Markdown Converter</title>
+  <link rel="icon" type="image/png" href="{{ url_for('static', filename='new.png', v='2') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+  <div class="bg" aria-hidden="true">
+    <div class="bg-glow"></div>
+    <div class="bg-grid"></div>
+    <div class="bg-noise"></div>
+    <span class="glyph glyph-1">#</span>
+    <span class="glyph glyph-2">##</span>
+    <span class="glyph glyph-3">```</span>
+    <span class="glyph glyph-4">*</span>
+    <span class="glyph glyph-5">&gt;</span>
+    <span class="glyph glyph-6">[ ]( )</span>
+    <span class="glyph glyph-7">---</span>
+    <span class="glyph glyph-8">**</span>
+  </div>
+
+  <header class="header reveal" style="--d: 0s">
+    <span class="logo-plate">
+      <img class="header-logo" src="{{ url_for('static', filename='banner.png', v='2') }}" alt="Logo">
+    </span>
+    <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Toggle theme">
+      <span class="theme-icon" aria-hidden="true">🌙</span>
+    </button>
+  </header>
+
+  <main class="main">
+    <section class="hero">
+      <h1 class="hero-title reveal" style="--d: .05s">
+        Anything in.<br>
+        <span class="hero-title-accent"><span class="hash" aria-hidden="true">#&nbsp;</span>Markdown out.</span>
+      </h1>
+      <p class="hero-text reveal" style="--d: .13s">
+        Markdown is the language LLMs understand best. Converting your files strips away layout noise and keeps clean structure — so models like ChatGPT and Claude read your content accurately, use <mark class="hl">fewer tokens</mark>, and give <mark class="hl">better answers</mark>.
+      </p>
+      <ul class="format-list reveal" style="--d: .18s" aria-label="Supported file formats">
+        <li class="format-chip fc-1">.pdf</li>
+        <li class="format-chip fc-2">.docx</li>
+        <li class="format-chip fc-3">.pptx</li>
+        <li class="format-chip fc-4">.xlsx</li>
+        <li class="format-chip fc-5">.html</li>
+        <li class="format-chip fc-6">.txt</li>
+        <li class="format-chip fc-7">.csv</li>
+        <li class="format-chip fc-8">.json</li>
+        <li class="format-chip fc-9">.xml</li>
+        <li class="format-chip fc-10">.png / .jpg</li>
+        <li class="format-chip fc-11">.mp3 / .wav / .m4a / .mp4</li>
+        <li class="format-chip fc-12">.zip</li>
+        <li class="format-chip fc-13">.epub</li>
+      </ul>
+    </section>
+
+    <section id="drop-zone" class="drop-zone reveal" style="--d: .36s" tabindex="0" role="button"
+             aria-label="Drag and drop files here or click to browse">
+      <div class="window-bar" aria-hidden="true">
+        <span class="dot dot-red"></span>
+        <span class="dot dot-yellow"></span>
+        <span class="dot dot-green"></span>
+        <span class="window-name">drop_files_here.md</span>
+      </div>
+      <div class="drop-zone-inner">
+        <span class="drop-zone-icon" aria-hidden="true">```</span>
+        <p class="drop-zone-title">Drag &amp; drop your files</p>
+        <p class="drop-zone-subtitle">or click anywhere in this window</p>
+        <button id="browse-btn" class="btn btn-primary" type="button">Browse Files</button>
+      </div>
+      <input id="file-input" type="file" multiple hidden>
+    </section>
+    <p class="drop-hint">⚠ Temporary session files — cleared after 30 minutes of inactivity.</p>
+
+    <section id="transcription-settings" class="transcription-settings" hidden aria-labelledby="transcription-title">
+      <div class="settings-heading">
+        <div>
+          <h2 id="transcription-title">Audio Transcription</h2>
+          <p id="selected-files-summary"></p>
+        </div>
+        <button id="cancel-selection" class="btn-icon" type="button" aria-label="Clear selected files">✕</button>
+      </div>
+      <fieldset class="engine-options">
+        <legend>Engine for this batch</legend>
+        <label class="engine-option">
+          <input type="radio" name="transcription-engine" value="openai" checked>
+          <span><strong>GPT-4o Transcribe <em>Recommended</em></strong><span>Fast, accurate cloud transcription.</span><small>gpt-4o-transcribe</small></span>
+        </label>
+        <label class="engine-option">
+          <input type="radio" name="transcription-engine" value="openai_diarize">
+          <span><strong>GPT-4o Transcribe Diarize <em>Identify Speakers</em></strong><span>Separates each speaker turn.</span><small>gpt-4o-transcribe-diarize</small></span>
+        </label>
+        <label id="local-engine-option" class="engine-option">
+          <input id="local-engine" type="radio" name="transcription-engine" value="local_whisper">
+          <span><strong>Local Whisper <em id="local-status-label">Checking…</em></strong><span>Private, offline transcription on this server.</span><small>large-v3-turbo · NVIDIA CUDA</small><span id="local-unavailable-reason" class="unavailable-reason"></span></span>
+        </label>
+      </fieldset>
+      <div class="additional-options">
+        <label>Language
+          <select id="transcription-language">
+            <option value="auto">Auto Detect</option>
+            <option value="en">English</option>
+            <option value="es">Spanish</option>
+          </select>
+        </label>
+        <label class="context-field">Technical vocabulary/context <span id="context-help">(optional)</span>
+          <input id="transcription-context" type="text" maxlength="500" placeholder="Names, acronyms, or specialized terms">
+        </label>
+        <label class="toggle-field">
+          <input id="include-timestamps" type="checkbox">
+          <span>Timestamps</span>
+          <small id="timestamps-help">Not available for GPT-4o Transcribe</small>
+        </label>
+      </div>
+      <button id="convert-files-btn" class="btn btn-primary convert-files-btn" type="button">Convert Files</button>
+    </section>
+
+    <section id="progress-section" class="progress-section" hidden>
+      <div class="progress-bar-track">
+        <div id="progress-bar" class="progress-bar-fill"></div>
+      </div>
+      <p id="progress-label" class="progress-label">Uploading…</p>
+    </section>
+
+    <section class="results-section reveal" style="--d: .44s">
+      <div class="results-header">
+        <h2 class="results-title"><span class="md-mark" aria-hidden="true">##&nbsp;</span>Converted Files</h2>
+        <button id="clear-history-btn" class="btn-clear-history" type="button">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <polyline points="3 6 5 6 21 6"></polyline>
+            <path d="M19 6l-1 14H6L5 6m3 0V4h8v2"></path>
+          </svg>
+          <span>Clear history</span>
+        </button>
+      </div>
+      <ul id="results-list" class="results-list"></ul>
+      <p id="results-empty" class="results-empty">Nothing yet — feed the window above.</p>
+    </section>
+  </main>
+
+  <footer class="footer reveal" style="--d: .52s">
+    <div class="footer-notices">
+<div class="notice notice-info">
+        <span class="notice-icon" aria-hidden="true">🔒</span>
+        <p class="notice-text">Document conversion stays local. Audio is transcribed by OpenAI or Local Whisper, according to the engine you select.</p>
+      </div>
+    </div>
+    <span class="footer-credit"><span class="hash">#</span><a href="https://4rji.com" target="_blank" rel="noopener noreferrer">by Havi</a></span>
+  </footer>
+
+  <div id="backdrop" class="backdrop" hidden></div>
+
+  <aside id="preview-panel" class="preview-panel" aria-hidden="true">
+    <div class="preview-header">
+      <span class="dot dot-red" aria-hidden="true"></span>
+      <span class="dot dot-yellow" aria-hidden="true"></span>
+      <span class="dot dot-green" aria-hidden="true"></span>
+      <h3 id="preview-title" class="preview-title"></h3>
+      <span class="preview-badge">Markdown Visualizer</span>
+      <button id="preview-close" class="btn-icon" type="button" aria-label="Close preview">✕</button>
+    </div>
+    <div id="preview-content" class="preview-content"></div>
+    <div class="preview-footer">
+      <button id="preview-copy" class="btn btn-secondary" type="button">
+        <span aria-hidden="true">⧉</span>
+        <span data-button-label>Copy</span>
+      </button>
+      <button id="preview-download" class="btn btn-primary" type="button">⬇ Download</button>
+    </div>
+  </aside>
+
+  <script src="{{ url_for('static', filename='marked.min.js') }}"></script>
+  <script src="{{ url_for('static', filename='purify.min.js') }}"></script>
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
