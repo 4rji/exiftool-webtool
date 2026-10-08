@@ -8,7 +8,7 @@ User=exiftool-webtool
 Group=exiftool-webtool
 WorkingDirectory=/opt/exiftool-webtool
 Environment=HOME=/var/cache/exiftool-webtool
-Environment=CLEANER_BIND=0.0.0.0:8000
+Environment=CLEANER_BIND=0.0.0.0:8777
 Environment=CLEANER_STORAGE_DIR=/var/cache/exiftool-webtool/jobs
 EnvironmentFile=-/etc/default/exiftool-webtool
 ExecStart=/usr/bin/gunicorn --bind ${CLEANER_BIND} --workers 2 --threads 4 --timeout 300 --access-logfile - 'app:create_app()'

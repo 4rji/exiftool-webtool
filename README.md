@@ -46,7 +46,7 @@ The script:
 1. Installs `exiftool`, `qpdf`, `mat2`, `file`, `python3-flask` and `gunicorn` with apt.
 2. Creates the `exiftool-webtool` system user.
 3. Copies the app to `/opt/exiftool-webtool`.
-4. Enables the `exiftool-webtool` systemd service, which runs gunicorn on `0.0.0.0:8000`.
+4. Enables the `exiftool-webtool` systemd service, which runs gunicorn on `0.0.0.0:8777`.
 
 Run it again after pulling changes to update the deployed copy.
 
@@ -54,7 +54,7 @@ Settings live in `/etc/default/exiftool-webtool`:
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `CLEANER_BIND` | `0.0.0.0:8000` | Address gunicorn listens on |
+| `CLEANER_BIND` | `0.0.0.0:8777` | Address gunicorn listens on |
 | `CLEANER_MAX_UPLOAD_MB` | `200` | Max size of one upload request |
 | `CLEANER_RETENTION_MINUTES` | `30` | When cleaned files are deleted |
 | `CLEANER_STORAGE_DIR` | `/var/cache/exiftool-webtool/jobs` | Working directory |
@@ -68,7 +68,7 @@ journalctl -u exiftool-webtool -f         # logs
 
 ```bash
 sudo apt install libimage-exiftool-perl libarchive-zip-perl qpdf mat2 file python3-flask gunicorn python3-pytest
-python3 app.py            # http://127.0.0.1:8000 (debug server)
+python3 app.py            # http://<this-host>:8777 (Flask dev server)
 python3 -m pytest         # tests need exiftool, qpdf, mat2 and file on PATH
 ```
 
@@ -81,5 +81,5 @@ python3 -m pytest         # tests need exiftool, qpdf, mat2 and file on PATH
 | `GET` | `/metadata/<id>` | Metadata found in the original, with `removed: true/false` per field |
 
 ```bash
-curl -F files=@photo.jpg -F files=@report.pdf http://server:8000/clean
+curl -F files=@photo.jpg -F files=@report.pdf http://server:8777/clean
 ```

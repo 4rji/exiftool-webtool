@@ -52,7 +52,7 @@ systemctl restart "$APP_NAME"
 
 sleep 2
 if systemctl is-active --quiet "$APP_NAME"; then
-  bind="$(. "/etc/default/$APP_NAME"; echo "${CLEANER_BIND:-0.0.0.0:8000}")"
+  bind="$(. "/etc/default/$APP_NAME"; echo "${CLEANER_BIND:-0.0.0.0:8777}")"
   echo "==> $APP_NAME is running on http://$bind"
   echo "    Settings: /etc/default/$APP_NAME   Logs: journalctl -u $APP_NAME -f"
 else
