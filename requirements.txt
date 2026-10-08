@@ -1,0 +1,4 @@
+# Python dependencies (deploy/install.sh uses the Debian packages instead).
+# System tools are also required: exiftool, qpdf (>= 11.10), mat2, file.
+flask>=3.1
+gunicorn>=23

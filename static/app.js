@@ -1,12 +1,20 @@
-/* Markdown Converter - drag & drop, upload, preview, download */
+/* Metadata Cleaner - drag & drop, upload, metadata report, download */
 
 (() => {
   "use strict";
 
-  const THEME_STORAGE_KEY = "markdown-converter-theme";
-  const HISTORY_STORAGE_KEY = "markdown-converter-result-history";
+  const THEME_STORAGE_KEY = "metadata-cleaner-theme";
+  const HISTORY_STORAGE_KEY = "metadata-cleaner-result-history";
   const HISTORY_LIMIT = 50;
   const DEFAULT_THEME = "dark";
+
+  const CATEGORY_ICONS = {
+    image: "🖼️",
+    pdf: "📕",
+    office: "📄",
+    media: "🎵",
+    other: "📦",
+  };
 
   const dropZone = document.getElementById("drop-zone");
   const fileInput = document.getElementById("file-input");
@@ -20,32 +28,13 @@
   const resultsEmpty = document.getElementById("results-empty");
   const clearHistoryBtn = document.getElementById("clear-history-btn");
   const backdrop = document.getElementById("backdrop");
-  const previewPanel = document.getElementById("preview-panel");
-  const previewTitle = document.getElementById("preview-title");
-  const previewContent = document.getElementById("preview-content");
-  const previewClose = document.getElementById("preview-close");
-  const previewCopy = document.getElementById("preview-copy");
-  const previewDownload = document.getElementById("preview-download");
-  const transcriptionSettings = document.getElementById("transcription-settings");
-  const selectedFilesSummary = document.getElementById("selected-files-summary");
-  const cancelSelection = document.getElementById("cancel-selection");
-  const convertFilesBtn = document.getElementById("convert-files-btn");
-  const languageSelect = document.getElementById("transcription-language");
-  const contextInput = document.getElementById("transcription-context");
-  const contextHelp = document.getElementById("context-help");
-  const timestampsInput = document.getElementById("include-timestamps");
-  const timestampsHelp = document.getElementById("timestamps-help");
-  const localEngine = document.getElementById("local-engine");
-  const localEngineOption = document.getElementById("local-engine-option");
-  const localStatusLabel = document.getElementById("local-status-label");
-  const localUnavailableReason = document.getElementById("local-unavailable-reason");
+  const reportPanel = document.getElementById("report-panel");
+  const reportTitle = document.getElementById("report-title");
+  const reportContent = document.getElementById("report-content");
+  const reportClose = document.getElementById("report-close");
+  const reportDownload = document.getElementById("report-download");
 
-  const MEDIA_EXTENSIONS = new Set(["mp3", "wav", "m4a", "aac", "flac", "ogg", "webm", "mp4"]);
-  let pendingFiles = [];
-
-  let activePreviewId = null;
-  let activePreviewMarkdown = "";
-  const copyResetTimers = new WeakMap();
+  let activeReportId = null;
 
   /* ---------- Theme ---------- */
 
@@ -55,14 +44,23 @@
   }
 
   function initTheme() {
-    const saved = localStorage.getItem(THEME_STORAGE_KEY);
+    let saved = null;
+    try {
+      saved = localStorage.getItem(THEME_STORAGE_KEY);
+    } catch {
+      // Storage blocked: fall back to the default theme.
+    }
     applyTheme(saved === "light" || saved === "dark" ? saved : DEFAULT_THEME);
   }
 
   themeToggle.addEventListener("click", () => {
     const current = document.documentElement.getAttribute("data-theme");
     const next = current === "dark" ? "light" : "dark";
-    localStorage.setItem(THEME_STORAGE_KEY, next);
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, next);
+    } catch {
+      // The toggle still works for this page view.
+    }
     applyTheme(next);
   });
 
@@ -84,7 +82,7 @@
 
   fileInput.addEventListener("change", () => {
     if (fileInput.files.length > 0) {
-      selectFiles(fileInput.files);
+      uploadFiles(fileInput.files);
       fileInput.value = "";
     }
   });
@@ -106,84 +104,25 @@
   dropZone.addEventListener("drop", (event) => {
     const files = event.dataTransfer ? event.dataTransfer.files : null;
     if (files && files.length > 0) {
-      selectFiles(files);
+      uploadFiles(files);
     }
   });
 
   /* ---------- Upload ---------- */
 
-  function containsMedia(files) {
-    return files.some((file) => MEDIA_EXTENSIONS.has((file.name.split(".").pop() || "").toLowerCase()));
-  }
-
-  function selectFiles(fileList) {
-    const files = Array.from(fileList);
-    if (!containsMedia(files)) {
-      uploadFiles(files);
-      return;
-    }
-    pendingFiles = files;
-    const mediaCount = files.filter((file) => containsMedia([file])).length;
-    selectedFilesSummary.textContent = `${files.length} file${files.length === 1 ? "" : "s"} selected · ${mediaCount} audio/video`;
-    transcriptionSettings.hidden = false;
-    transcriptionSettings.scrollIntoView({ behavior: "smooth", block: "nearest" });
-  }
-
-  function selectedEngine() {
-    return document.querySelector('input[name="transcription-engine"]:checked').value;
-  }
-
-  function updateTimestampControl() {
-    const engine = selectedEngine();
-    timestampsInput.disabled = engine === "openai";
-    if (engine === "openai") timestampsInput.checked = false;
-    if (engine === "openai_diarize") timestampsInput.checked = true;
-    timestampsHelp.textContent = engine === "openai" ? "Not available for GPT-4o Transcribe" : "Add [HH:MM:SS] to transcript segments";
-    contextInput.disabled = engine === "openai_diarize";
-    contextHelp.textContent = engine === "openai_diarize" ? "(not supported by diarization)" : "(optional)";
-  }
-
-  document.querySelectorAll('input[name="transcription-engine"]').forEach((input) => {
-    input.addEventListener("change", updateTimestampControl);
-  });
-
-  cancelSelection.addEventListener("click", () => {
-    pendingFiles = [];
-    transcriptionSettings.hidden = true;
-  });
-
-  convertFilesBtn.addEventListener("click", () => {
-    if (!pendingFiles.length) return;
-    const files = pendingFiles;
-    pendingFiles = [];
-    transcriptionSettings.hidden = true;
-    uploadFiles(files, {
-      engine: selectedEngine(),
-      language: languageSelect.value,
-      context: contextInput.value,
-      timestamps: timestampsInput.checked,
-    });
-  });
-
-  function uploadFiles(fileList, transcription = null) {
+  function uploadFiles(fileList) {
     const formData = new FormData();
     Array.from(fileList).forEach((file) => formData.append("files", file));
-    if (transcription) {
-      formData.append("transcription_engine", transcription.engine);
-      formData.append("transcription_language", transcription.language);
-      formData.append("transcription_context", transcription.context);
-      formData.append("include_timestamps", String(transcription.timestamps));
-    }
 
     showProgress(fileList.length);
 
     const xhr = new XMLHttpRequest();
-    xhr.open("POST", "/convert");
+    xhr.open("POST", "/clean");
 
     xhr.upload.addEventListener("progress", (event) => {
       if (event.lengthComputable) {
         const percent = Math.round((event.loaded / event.total) * 100);
-        setProgress(percent, percent < 100 ? `Uploading… ${percent}%` : "Converting…");
+        setProgress(percent, percent < 100 ? `Uploading… ${percent}%` : "Removing metadata…");
       }
     });
 
@@ -200,12 +139,12 @@
         renderUploadError(payload.error || `Upload failed (HTTP ${xhr.status})`);
         return;
       }
-      payload.files.forEach(addResultItem);
+      payload.files.forEach((file) => addResultItem(file));
     });
 
     xhr.addEventListener("error", () => {
       hideProgress();
-      renderUploadError("Network error — is the server running?");
+      renderUploadError("Network error. Is the server running?");
     });
 
     xhr.send(formData);
@@ -238,7 +177,7 @@
     try {
       const parsed = JSON.parse(sessionStorage.getItem(HISTORY_STORAGE_KEY));
       if (!Array.isArray(parsed)) return [];
-      return parsed.filter((file) => file && file.id && file.md_name);
+      return parsed.filter((file) => file && file.id && file.clean_name);
     } catch {
       return [];
     }
@@ -246,10 +185,7 @@
 
   function writeResultHistory(history) {
     try {
-      sessionStorage.setItem(
-        HISTORY_STORAGE_KEY,
-        JSON.stringify(history.slice(-HISTORY_LIMIT))
-      );
+      sessionStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(history.slice(-HISTORY_LIMIT)));
     } catch {
       // The app still works when browser storage is unavailable.
     }
@@ -260,17 +196,17 @@
     const history = readResultHistory().filter((entry) => entry.id !== file.id);
     history.push({
       id: file.id,
-      md_name: file.md_name,
       status: "ok",
+      original_name: file.original_name,
+      clean_name: file.clean_name,
+      category: file.category,
+      removed_count: file.removed_count,
     });
     writeResultHistory(history);
   }
 
   function restoreResultHistory() {
-    readResultHistory()
-      .slice()
-      .reverse()
-      .forEach((file) => addResultItem(file, { persist: false }));
+    readResultHistory().forEach((file) => addResultItem(file, { persist: false }));
   }
 
   function clearResultHistory() {
@@ -280,20 +216,19 @@
       // Clearing the visible list still works when browser storage is blocked.
     }
     resultsList.replaceChildren();
-    closePreview();
+    closeReport();
     updateEmptyState();
   }
 
   clearHistoryBtn.addEventListener("click", clearResultHistory);
 
   function renderUploadError(message) {
-    addResultItem({
-      id: null,
-      original_name: "Upload",
-      md_name: null,
-      status: "error",
-      error: message,
-    });
+    addResultItem({ original_name: "Upload", status: "error", error: message });
+  }
+
+  function removedLabel(count) {
+    if (!count) return "no metadata found";
+    return `${count} field${count === 1 ? "" : "s"} removed`;
   }
 
   function addResultItem(file, options = {}) {
@@ -302,30 +237,31 @@
 
     if (file.status !== "ok") {
       item.classList.add("result-error");
-      item.append(
-        makeSpan("result-icon", "❌"),
+      const info = makeSpan("result-info", "");
+      info.append(
         makeSpan("result-name", file.original_name),
-        makeSpan("result-error-message", file.error || "Conversion failed")
+        makeSpan("result-error-message", file.error || "Cleaning failed")
       );
+      item.append(makeSpan("result-icon", "❌"), info);
     } else {
-      const previewBtn = makeViewButton(`Preview ${file.md_name}`, () =>
-        openPreview(file.id, file.md_name)
+      const info = makeSpan("result-info", "");
+      const meta = makeSpan("result-meta", "");
+      meta.append(
+        makeSpan(`category-chip category-${file.category}`, file.category),
+        makeSpan("result-removed", removedLabel(file.removed_count))
       );
-      const copyBtn = makeCopyButton(`Copy ${file.md_name}`, (event) =>
-        copyFile(file.id, event.currentTarget)
-      );
-      const downloadBtn = makeDownloadButton(`Download ${file.md_name}`, () =>
-        downloadFile(file.id)
-      );
+      info.append(makeSpan("result-name", file.clean_name), meta);
+
       const actions = document.createElement("span");
       actions.className = "result-actions";
-      actions.append(previewBtn, copyBtn, downloadBtn);
-      item.dataset.fileId = file.id;
-      item.append(
-        makeSpan("result-icon", "📄"),
-        makeSpan("result-name", file.md_name),
-        actions
+      actions.append(
+        makeViewButton(`View metadata of ${file.original_name}`, () => openReport(file.id)),
+        makeDownloadButton(`Download ${file.clean_name}`, () => downloadFile(file.id))
       );
+
+      item.dataset.fileId = file.id;
+      item.title = `Original: ${file.original_name}`;
+      item.append(makeSpan("result-icon", CATEGORY_ICONS[file.category] || "📦"), info, actions);
     }
 
     resultsList.prepend(item);
@@ -366,89 +302,6 @@
     return button;
   }
 
-  function makeCopyButton(label, onClick) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "btn-copy";
-    button.setAttribute("aria-label", label);
-    button.innerHTML =
-      '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>' +
-      "<span data-button-label>Copy</span>";
-    button.addEventListener("click", onClick);
-    return button;
-  }
-
-  async function copyText(text) {
-    if (navigator.clipboard && window.isSecureContext) {
-      await navigator.clipboard.writeText(text);
-      return;
-    }
-
-    const textarea = document.createElement("textarea");
-    textarea.value = text;
-    textarea.setAttribute("readonly", "");
-    textarea.style.position = "fixed";
-    textarea.style.top = "-9999px";
-    textarea.style.left = "-9999px";
-    document.body.appendChild(textarea);
-    textarea.select();
-
-    try {
-      if (!document.execCommand("copy")) {
-        throw new Error("Copy command failed");
-      }
-    } finally {
-      textarea.remove();
-    }
-  }
-
-  function setCopyStatus(button, text) {
-    if (!button) return;
-    const label = button.querySelector("[data-button-label]");
-    if (!label) return;
-
-    if (!button.dataset.defaultCopyLabel) {
-      button.dataset.defaultCopyLabel = label.textContent;
-    }
-    if (copyResetTimers.has(button)) {
-      window.clearTimeout(copyResetTimers.get(button));
-      copyResetTimers.delete(button);
-    }
-
-    label.textContent = text;
-    button.disabled = text === "Copying";
-    if (text === "Copying") return;
-
-    const defaultLabel = button.dataset.defaultCopyLabel;
-    const resetTimer = window.setTimeout(() => {
-      label.textContent = defaultLabel;
-      button.disabled = false;
-      copyResetTimers.delete(button);
-    }, 1400);
-
-    copyResetTimers.set(button, resetTimer);
-  }
-
-  async function copyFile(fileId, button) {
-    setCopyStatus(button, "Copying");
-    try {
-      let markdown = "";
-      if (activePreviewId === fileId && activePreviewMarkdown) {
-        markdown = activePreviewMarkdown;
-      } else {
-        const response = await fetch(`/preview/${encodeURIComponent(fileId)}`);
-        if (!response.ok) {
-          throw new Error(`Copy unavailable (HTTP ${response.status})`);
-        }
-        markdown = await response.text();
-      }
-      await copyText(markdown);
-      setCopyStatus(button, "Copied");
-    } catch {
-      setCopyStatus(button, "Failed");
-    }
-  }
-
   /* ---------- Download ---------- */
 
   function downloadFile(fileId) {
@@ -460,99 +313,136 @@
     link.remove();
   }
 
-  /* ---------- Preview panel ---------- */
+  /* ---------- Metadata report panel ---------- */
 
-  function renderMarkdownPage(markdown) {
-    previewContent.innerHTML = "";
-    const page = document.createElement("div");
-    page.className = "md-page";
-
-    if (window.marked && window.DOMPurify) {
-      const rawHtml = window.marked.parse(markdown, { breaks: true });
-      page.innerHTML = window.DOMPurify.sanitize(rawHtml);
-    } else {
-      page.textContent = markdown;
-      page.classList.add("md-page-plain");
+  function groupFields(fields) {
+    const groups = new Map();
+    fields.forEach((field) => {
+      if (!groups.has(field.group)) groups.set(field.group, []);
+      groups.get(field.group).push(field);
+    });
+    // "File" holds format facts (type, size, encoding): show the real metadata first.
+    if (groups.has("File")) {
+      const fileFields = groups.get("File");
+      groups.delete("File");
+      groups.set("File", fileFields);
     }
-
-    previewContent.appendChild(page);
-    previewContent.scrollTop = 0;
+    return groups;
   }
 
-  async function openPreview(fileId, mdName) {
+  function renderReport(report) {
+    reportContent.replaceChildren();
+
+    const summary = document.createElement("div");
+    summary.className = "report-summary";
+    const total = report.fields.length;
+    summary.append(
+      makeSpan(`category-chip category-${report.category}`, report.category),
+      makeSpan("report-mime", report.mime),
+      makeSpan("report-count", total ? `${report.removed_count} of ${total} fields removed` : "No metadata found")
+    );
+    reportContent.append(summary);
+
+    if (!total) return;
+
+    const legend = document.createElement("p");
+    legend.className = "report-legend";
+    legend.textContent =
+      "Metadata found in the uploaded file. “Kept” fields describe the file itself (format, size, encoding) and are needed to open it.";
+    reportContent.append(legend);
+
+    groupFields(report.fields).forEach((fields, group) => {
+      const section = document.createElement("section");
+      section.className = "report-group";
+
+      const heading = document.createElement("h4");
+      heading.className = "report-group-title";
+      heading.textContent = group;
+      section.append(heading);
+
+      const table = document.createElement("table");
+      table.className = "report-table";
+      const body = document.createElement("tbody");
+      fields.forEach((field) => {
+        const row = document.createElement("tr");
+        if (field.removed) row.className = "is-removed";
+
+        const tag = document.createElement("th");
+        tag.scope = "row";
+        tag.textContent = field.tag;
+
+        const value = document.createElement("td");
+        value.className = "report-value";
+        value.textContent = field.value;
+
+        const status = document.createElement("td");
+        status.className = "report-status";
+        status.append(makeSpan(field.removed ? "status-chip status-removed" : "status-chip status-kept", field.removed ? "removed" : "kept"));
+
+        row.append(tag, value, status);
+        body.append(row);
+      });
+      table.append(body);
+      section.append(table);
+      reportContent.append(section);
+    });
+  }
+
+  function showPanel() {
+    backdrop.hidden = false;
+    reportPanel.classList.add("open");
+    reportPanel.setAttribute("aria-hidden", "false");
+    reportContent.scrollTop = 0;
+    reportClose.focus();
+  }
+
+  async function openReport(fileId) {
+    activeReportId = fileId;
+    reportTitle.textContent = "Loading…";
+    reportContent.replaceChildren();
+    reportDownload.disabled = true;
+    showPanel();
     try {
-      const response = await fetch(`/preview/${encodeURIComponent(fileId)}`);
+      const response = await fetch(`/metadata/${encodeURIComponent(fileId)}`);
+      const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error(`Preview unavailable (HTTP ${response.status})`);
+        throw new Error(payload.error || `Report unavailable (HTTP ${response.status})`);
       }
-      const markdown = await response.text();
-      previewTitle.textContent = mdName;
-      renderMarkdownPage(markdown);
-      activePreviewId = fileId;
-      activePreviewMarkdown = markdown;
-      backdrop.hidden = false;
-      previewPanel.classList.add("open");
-      previewPanel.setAttribute("aria-hidden", "false");
+      if (activeReportId !== fileId) return;
+      reportTitle.textContent = payload.original_name;
+      renderReport(payload);
+      reportDownload.disabled = false;
     } catch (error) {
-      previewTitle.textContent = mdName;
-      previewContent.textContent = error.message;
-      activePreviewId = null;
-      activePreviewMarkdown = "";
-      backdrop.hidden = false;
-      previewPanel.classList.add("open");
-      previewPanel.setAttribute("aria-hidden", "false");
+      if (activeReportId !== fileId) return;
+      reportTitle.textContent = "Metadata report";
+      reportContent.replaceChildren(makeSpan("report-error", error.message));
     }
   }
 
-  function closePreview() {
-    previewPanel.classList.remove("open");
-    previewPanel.setAttribute("aria-hidden", "true");
+  function closeReport() {
+    reportPanel.classList.remove("open");
+    reportPanel.setAttribute("aria-hidden", "true");
     backdrop.hidden = true;
-    activePreviewId = null;
-    activePreviewMarkdown = "";
+    activeReportId = null;
   }
 
-  previewClose.addEventListener("click", closePreview);
-  backdrop.addEventListener("click", closePreview);
+  reportClose.addEventListener("click", closeReport);
+  backdrop.addEventListener("click", closeReport);
 
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && activePreviewId !== null) {
-      closePreview();
+    if (event.key === "Escape" && activeReportId !== null) {
+      closeReport();
     }
   });
 
-  previewDownload.addEventListener("click", () => {
-    if (activePreviewId === null) return;
-    downloadFile(activePreviewId);
-  });
-
-  previewCopy.addEventListener("click", (event) => {
-    if (activePreviewId === null) return;
-    copyFile(activePreviewId, event.currentTarget);
+  reportDownload.addEventListener("click", () => {
+    if (activeReportId === null) return;
+    downloadFile(activeReportId);
   });
 
   /* ---------- Init ---------- */
 
-  async function loadTranscriptionStatus() {
-    try {
-      const response = await fetch("/api/transcription/status");
-      if (!response.ok) throw new Error();
-      const status = await response.json();
-      localEngine.disabled = !status.local.available;
-      localEngineOption.classList.toggle("engine-unavailable", !status.local.available);
-      localStatusLabel.textContent = status.local.available ? "Private / Offline" : "Unavailable";
-      localUnavailableReason.textContent = status.local.unavailable_reason || "";
-    } catch {
-      localEngine.disabled = true;
-      localEngineOption.classList.add("engine-unavailable");
-      localStatusLabel.textContent = "Unavailable";
-      localUnavailableReason.textContent = "Status check failed";
-    }
-  }
-
   initTheme();
-  updateTimestampControl();
-  loadTranscriptionStatus();
   restoreResultHistory();
   updateEmptyState();
 })();
