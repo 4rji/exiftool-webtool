@@ -72,14 +72,39 @@ def exiftool_strip(path, keep=()):
         raise error(f"exiftool: {message}")
 
 
-def qpdf_rewrite(src, dst):
-    """Rewrite a PDF from scratch, dropping Info, XMP and old revisions."""
+def qpdf_objects(path):
+    """Return the PDF's objects as qpdf JSON v2 ({"obj:N G R": ...}), without stream data."""
+    path = Path(path)
+    proc = _run(
+        ["qpdf", "--json-output", "--json-stream-data=none", "--json-key=qpdf", path.name, "-"],
+        cwd=path.parent,
+    )
+    if proc.returncode not in (0, 3):
+        raise CleanError(f"qpdf: {_first_message(proc)}")
+    try:
+        return json.loads(proc.stdout)["qpdf"][1]
+    except (json.JSONDecodeError, KeyError, IndexError):
+        raise CleanError("qpdf: could not read the PDF structure") from None
+
+
+def qpdf_rewrite(src, dst, updates=None):
+    """Rewrite a PDF from scratch, dropping Info, XMP and old revisions.
+
+    `updates` maps "obj:N G R" to replacement objects in qpdf JSON v2;
+    streams given without data keep their original data.
+    """
     src, dst = Path(src), Path(dst)
+    update_args = []
+    if updates:
+        update_file = src.with_name("updates.json")
+        update_file.write_text(json.dumps({"qpdf": [{"jsonversion": 2}, updates]}))
+        update_args = [f"--update-from-json={update_file.name}"]
     proc = _run(
         [
             "qpdf",
             "--remove-info",
             "--remove-metadata",
+            *update_args,
             "--linearize",
             "--deterministic-id",
             src.name,

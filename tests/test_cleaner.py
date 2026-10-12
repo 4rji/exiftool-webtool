@@ -1,4 +1,5 @@
 import shutil
+import subprocess
 import zipfile
 
 import pytest
@@ -13,6 +14,14 @@ def values(fields):
 
 def tags(fields):
     return {field["tag"] for field in fields}
+
+
+def uncompressed_pdf(path):
+    """PDF bytes with compression and object streams undone, so every object is searchable."""
+    plain = path.with_name("plain.pdf")
+    proc = subprocess.run(["qpdf", "--qdf", "--object-streams=disable", str(path), str(plain)])
+    assert proc.returncode in (0, 3)
+    return plain.read_bytes()
 
 
 # ---------- detection ----------
@@ -93,6 +102,25 @@ def test_cleans_pdf_without_leaving_recoverable_revisions(pdf_with_metadata, tmp
     assert SECRET.encode() not in data
     assert b"Secret Office" not in data
     assert SECRET not in values(read_metadata(out))
+
+
+def test_cleans_pdf_page_metadata_and_comment_authors(pdf_with_hidden_metadata, tmp_path):
+    assert SECRET in values(read_metadata(pdf_with_hidden_metadata))
+    out = tmp_path / "clean.pdf"
+    clean_file(pdf_with_hidden_metadata, out, "pdf")
+    data = uncompressed_pdf(out)
+    assert SECRET.encode() not in data
+    assert b"/PieceInfo" not in data
+    assert b"/LastModified" not in data
+    assert SECRET not in values(read_metadata(out))
+
+
+def test_pdf_cleaning_keeps_comment_text_and_form_field_names(pdf_with_hidden_metadata, tmp_path):
+    out = tmp_path / "clean.pdf"
+    clean_file(pdf_with_hidden_metadata, out, "pdf")
+    data = uncompressed_pdf(out)
+    assert b"Visible comment" in data
+    assert b"/T (email_field)" in data
 
 
 def test_cleans_docx_properties(docx_with_metadata, tmp_path):

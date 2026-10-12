@@ -4,19 +4,62 @@ import shutil
 import tempfile
 from pathlib import Path
 
-from .engines import CleanError, UnsupportedFormat, exiftool_strip, mat2_clean, qpdf_rewrite
+from .engines import (
+    CleanError,
+    UnsupportedFormat,
+    exiftool_strip,
+    mat2_clean,
+    qpdf_objects,
+    qpdf_rewrite,
+)
 
 # Keep what changes how an image looks: phone photos rely on Orientation,
 # and dropping the ICC profile shifts colors.
 IMAGE_KEEP_TAGS = ("-tagsFromFile", "@", "-ColorSpaceTags", "-Orientation")
 
+# exiftool and qpdf only remove the document-level Info and XMP. Pages, images,
+# fonts and form XObjects can carry their own XMP packet, and PieceInfo holds
+# private data from the authoring application.
+PDF_PRIVATE_KEYS = {"/Metadata", "/PieceInfo", "/LastModified"}
+# Comment author and dates. Widgets are skipped: there /T is the form field name.
+PDF_ANNOTATION_KEYS = {"/T", "/M", "/CreationDate"}
+
+
+def _scrub_pdf_value(value):
+    if isinstance(value, list):
+        return [_scrub_pdf_value(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    scrubbed = {key: _scrub_pdf_value(item) for key, item in value.items() if key not in PDF_PRIVATE_KEYS}
+    is_annotation = "/Rect" in scrubbed and "/Subtype" in scrubbed
+    if is_annotation and scrubbed["/Subtype"] != "/Widget":
+        scrubbed = {key: item for key, item in scrubbed.items() if key not in PDF_ANNOTATION_KEYS}
+    return scrubbed
+
+
+def _pdf_updates(objects):
+    """Objects that carry metadata, rewritten without it (qpdf JSON v2)."""
+    updates = {}
+    for key, obj in objects.items():
+        if not key.startswith("obj:"):
+            continue
+        if "stream" in obj:
+            # Without "data", qpdf keeps the original stream data.
+            new = {"stream": {"dict": _scrub_pdf_value(obj["stream"]["dict"])}}
+        else:
+            new = {"value": _scrub_pdf_value(obj["value"])}
+        if new != obj:
+            updates[key] = new
+    return updates
+
 
 def _pdf(work):
     # exiftool alone only appends an incremental update (the old values stay
-    # recoverable); qpdf then rewrites the file keeping only live objects.
+    # recoverable); qpdf then rewrites the file keeping only live objects, so
+    # the XMP streams no longer referenced by any object are dropped too.
     exiftool_strip(work)
     rewritten = work.with_name("rewritten" + work.suffix)
-    qpdf_rewrite(work, rewritten)
+    qpdf_rewrite(work, rewritten, _pdf_updates(qpdf_objects(work)))
     return rewritten
 
 

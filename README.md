@@ -13,7 +13,7 @@ The file type is detected from its **content** (libmagic), not its extension.
 
 | Type | Tool chain |
 | --- | --- |
-| PDF | `exiftool -all=` then `qpdf --remove-info --remove-metadata --linearize --deterministic-id` |
+| PDF | `exiftool -all=`, then one `qpdf --remove-info --remove-metadata --update-from-json=… --linearize --deterministic-id` that also scrubs every object (see below) |
 | Images (JPEG, PNG, HEIC, TIFF, GIF, WebP…) | `exiftool -all=`, keeping Orientation and the color profile so the picture looks the same; falls back to `mat2` |
 | Office / ODF / EPUB (docx, xlsx, pptx, odt, ods, odp, epub) | `mat2` |
 | Audio / video and anything else | `exiftool -all=`, falling back to `mat2` |
@@ -21,6 +21,17 @@ The file type is detected from its **content** (libmagic), not its extension.
 Why the PDF needs both tools: `exiftool` only appends an incremental update
 to a PDF, so the old values can still be recovered. `qpdf` then rewrites the
 whole file and keeps only the objects that are still in use.
+
+Both tools only remove the *document-level* Info dictionary and XMP packet.
+Before the rewrite, the cleaner reads every object with
+`qpdf --json-output` and drops what document-level cleaning misses:
+
+- `/Metadata` on any object: XMP packets on pages, images, fonts, form XObjects
+- `/PieceInfo` and `/LastModified`: private data from the authoring application
+- `/T` (author), `/M` and `/CreationDate` on comments and other annotations
+
+Comment text stays, and so does `/T` on form widgets, because there it is the
+field name. The document language (`/Lang`) is kept for screen readers.
 
 Files that no tool can rewrite (for example legacy `.doc`/`.xls` or unknown
 binaries) are reported as *Unsupported format*; the rest of the batch is still

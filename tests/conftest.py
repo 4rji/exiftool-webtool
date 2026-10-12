@@ -53,15 +53,8 @@ def png_with_metadata(tmp_path):
     return path
 
 
-def build_pdf(author):
-    """Minimal one-page PDF whose Info dictionary names an author."""
-    objects = [
-        b"<< /Type /Catalog /Pages 2 0 R >>",
-        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R /Resources << >> >>",
-        b"<< /Length 18 >>\nstream\n0 0 m 100 100 l S\nendstream",
-        f"<< /Author ({author}) /Producer (Secret Office 1.0) /CreationDate (D:20240101000000Z) >>".encode(),
-    ]
+def write_pdf(objects, trailer=b""):
+    """Serialize objects numbered from 1 (object 1 is the Catalog) into a PDF."""
     out = bytearray(b"%PDF-1.4\n")
     offsets = []
     for number, body in enumerate(objects, start=1):
@@ -71,8 +64,53 @@ def build_pdf(author):
     out += f"xref\n0 {len(objects) + 1}\n0000000000 65535 f \n".encode()
     for offset in offsets:
         out += f"{offset:010d} 00000 n \n".encode()
-    out += f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R /Info 5 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode()
+    out += f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R ".encode() + trailer
+    out += f" >>\nstartxref\n{xref}\n%%EOF\n".encode()
     return bytes(out)
+
+
+def build_pdf(author):
+    """Minimal one-page PDF whose Info dictionary names an author."""
+    return write_pdf(
+        [
+            b"<< /Type /Catalog /Pages 2 0 R >>",
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R /Resources << >> >>",
+            b"<< /Length 18 >>\nstream\n0 0 m 100 100 l S\nendstream",
+            f"<< /Author ({author}) /Producer (Secret Office 1.0) /CreationDate (D:20240101000000Z) >>".encode(),
+        ],
+        trailer=b"/Info 5 0 R",
+    )
+
+
+def build_pdf_with_hidden_metadata(secret):
+    """PDF hiding `secret` where document-level cleaning does not reach:
+    a page XMP packet, PieceInfo and a comment's author. It also has a
+    visible comment text and a form field, which must survive cleaning."""
+    xmp = (
+        '<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">'
+        '<rdf:Description rdf:about="" xmlns:dc="http://purl.org/dc/elements/1.1/">'
+        f"<dc:creator><rdf:Seq><rdf:li>{secret}</rdf:li></rdf:Seq></dc:creator>"
+        "</rdf:Description></rdf:RDF></x:xmpmeta>"
+    ).encode()
+    return write_pdf(
+        [
+            b"<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [6 0 R] >> >>",
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            (
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R /Resources << >> "
+                "/Metadata 7 0 R /Annots [5 0 R 6 0 R] /LastModified (D:20240101000000Z) "
+                f"/PieceInfo << /SecretApp << /LastModified (D:20240101000000Z) /Private ({secret}) >> >> >>"
+            ).encode(),
+            b"<< /Length 18 >>\nstream\n0 0 m 100 100 l S\nendstream",
+            (
+                "<< /Type /Annot /Subtype /Text /Rect [10 10 30 30] /P 3 0 R "
+                f"/T ({secret}) /M (D:20240101000000Z) /Contents (Visible comment) >>"
+            ).encode(),
+            b"<< /Type /Annot /Subtype /Widget /FT /Tx /T (email_field) /Rect [50 50 150 70] /P 3 0 R >>",
+            f"<< /Type /Metadata /Subtype /XML /Length {len(xmp)} >>\nstream\n".encode() + xmp + b"\nendstream",
+        ]
+    )
 
 
 @pytest.fixture
@@ -80,6 +118,13 @@ def pdf_with_metadata(tmp_path):
     path = tmp_path / "report.pdf"
     path.write_bytes(build_pdf(SECRET))
     exiftool_write(path, f"-XMP-dc:Creator={SECRET}")
+    return path
+
+
+@pytest.fixture
+def pdf_with_hidden_metadata(tmp_path):
+    path = tmp_path / "commented.pdf"
+    path.write_bytes(build_pdf_with_hidden_metadata(SECRET))
     return path
 
 
