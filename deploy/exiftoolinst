@@ -1,0 +1,144 @@
+#!/usr/bin/env bash
+# Standalone installer for exiftool-webtool. Self-contained: does NOT call
+# deploy/install.sh, so this one file can be copied anywhere and run on its
+# own (e.g. curl -fsSL .../bootstrap.sh | bash) on a fresh Debian box.
+#
+# What it does:
+#   1. Clones the app source into /tmp (just to get app.py/cleaner/templates/static).
+#   2. Installs apt packages (exiftool, qpdf, mat2, file, flask, gunicorn).
+#   3. Creates the system user, copies the app to /opt, writes env + systemd
+#      unit from scratch, enables and starts the service.
+#
+# Does NOT need to be run with sudo itself; it calls sudo internally for the
+# steps that need root.
+set -euo pipefail
+
+if [[ -t 1 ]]; then
+  BOLD=$'\033[1m'; RED=$'\033[31m'; GREEN=$'\033[32m'; YELLOW=$'\033[33m'; BLUE=$'\033[34m'; RESET=$'\033[0m'
+else
+  BOLD=''; RED=''; GREEN=''; YELLOW=''; BLUE=''; RESET=''
+fi
+
+info() { printf '%s==>%s %s\n' "${BLUE}${BOLD}" "$RESET" "$1"; }
+ok()   { printf '%s==>%s %s\n' "${GREEN}${BOLD}" "$RESET" "$1"; }
+warn() { printf '%s==>%s %s\n' "${YELLOW}${BOLD}" "$RESET" "$1"; }
+die()  { printf '%s==>%s %s\n' "${RED}${BOLD}" "$RESET" "$1" >&2; exit 1; }
+
+REPO_URL="https://github.com/4rji/exiftool-webtool.git"
+CLONE_DIR="/tmp/exiftool-webtool-install"
+APP_NAME=exiftool-webtool
+APP_DIR="/opt/$APP_NAME"
+CACHE_DIR="/var/cache/$APP_NAME"
+
+if [[ $EUID -eq 0 ]]; then
+  SUDO=""
+else
+  command -v sudo >/dev/null 2>&1 || die "Need sudo installed, or run this script as root."
+  SUDO="sudo"
+fi
+
+if [[ -r /etc/os-release ]] && ! grep -qi debian /etc/os-release; then
+  warn "This doesn't look like Debian; continuing anyway."
+fi
+
+if ! command -v git >/dev/null 2>&1; then
+  info "Installing git"
+  $SUDO apt-get update -qq
+  $SUDO apt-get install -y git
+fi
+
+info "Cloning $REPO_URL to $CLONE_DIR"
+rm -rf "$CLONE_DIR"
+git clone --depth 1 "$REPO_URL" "$CLONE_DIR"
+
+info "Installing packages"
+$SUDO apt-get update -qq
+$SUDO apt-get install -y \
+  libimage-exiftool-perl libarchive-zip-perl \
+  qpdf mat2 file \
+  python3-flask gunicorn
+
+qpdf_version="$(qpdf --version | head -n1 | awk '{print $3}')"
+if ! printf '11.10\n%s\n' "$qpdf_version" | sort -V -C; then
+  die "qpdf $qpdf_version is too old: --remove-info/--remove-metadata need qpdf >= 11.10"
+fi
+
+info "Creating system user $APP_NAME"
+if ! id -u "$APP_NAME" >/dev/null 2>&1; then
+  $SUDO useradd --system --home-dir "$CACHE_DIR" --no-create-home --shell /usr/sbin/nologin "$APP_NAME"
+fi
+
+info "Copying application to $APP_DIR"
+$SUDO install -d -m 755 "$APP_DIR"
+$SUDO rm -rf "$APP_DIR/cleaner" "$APP_DIR/templates" "$APP_DIR/static"
+$SUDO cp -r "$CLONE_DIR/app.py" "$CLONE_DIR/storage.py" "$CLONE_DIR/cleaner" "$CLONE_DIR/templates" "$CLONE_DIR/static" "$APP_DIR/"
+find "$APP_DIR" -name __pycache__ -prune -exec $SUDO rm -rf {} +
+$SUDO chown -R root:root "$APP_DIR"
+$SUDO chmod -R u=rwX,go=rX "$APP_DIR"
+
+info "Writing env file /etc/default/$APP_NAME"
+if [[ ! -f "/etc/default/$APP_NAME" ]]; then
+  $SUDO tee "/etc/default/$APP_NAME" >/dev/null <<'EOF'
+# Settings for the exiftool-webtool service.
+# Edit here, then: sudo systemctl restart exiftool-webtool
+
+# Address and port gunicorn listens on.
+# Use 127.0.0.1:8777 if a reverse proxy (nginx, caddy) sits in front.
+CLEANER_BIND=0.0.0.0:8777
+
+# Maximum size of one upload request (all files together), in MB.
+CLEANER_MAX_UPLOAD_MB=200
+
+# Cleaned files and their metadata reports are deleted after this many minutes.
+CLEANER_RETENTION_MINUTES=30
+EOF
+fi
+
+info "Writing systemd unit"
+$SUDO tee "/etc/systemd/system/$APP_NAME.service" >/dev/null <<EOF
+[Unit]
+Description=Metadata Cleaner web tool (exiftool / qpdf / mat2)
+After=network.target
+
+[Service]
+Type=simple
+User=$APP_NAME
+Group=$APP_NAME
+WorkingDirectory=$APP_DIR
+Environment=HOME=$CACHE_DIR
+Environment=CLEANER_BIND=0.0.0.0:8777
+Environment=CLEANER_STORAGE_DIR=$CACHE_DIR/jobs
+EnvironmentFile=-/etc/default/$APP_NAME
+ExecStart=/usr/bin/gunicorn --bind \${CLEANER_BIND} --workers 2 --threads 4 --timeout 300 --access-logfile - 'app:create_app()'
+Restart=on-failure
+
+CacheDirectory=$APP_NAME
+CacheDirectoryMode=0700
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+$SUDO systemctl daemon-reload
+$SUDO systemctl enable "$APP_NAME"
+$SUDO systemctl restart "$APP_NAME"
+
+sleep 2
+if $SUDO systemctl is-active --quiet "$APP_NAME"; then
+  bind="$($SUDO bash -c ". /etc/default/$APP_NAME; echo \${CLEANER_BIND:-0.0.0.0:8777}")"
+  ok "$APP_NAME is running on http://$bind"
+  echo "    Settings: /etc/default/$APP_NAME   Logs: journalctl -u $APP_NAME -f"
+else
+  die "$APP_NAME failed to start; check: journalctl -u $APP_NAME -e"
+fi
